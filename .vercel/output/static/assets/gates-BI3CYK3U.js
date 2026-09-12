@@ -1,0 +1,1 @@
+import{t as e}from"./react-SIfiwpqq.js";import{t}from"./jsx-runtime-FXir3jLF.js";import{t as n}from"./useNavigate-CvxEMzDL.js";import{t as r}from"./use-current-user-CjKJlXQo.js";e();var i=t(),a=`/login`;function o({children:e}){let{user:t}=r();return t?(0,i.jsx)(i.Fragment,{children:e}):null}function s({to:e=a}){return(0,i.jsx)(n,{to:e})}export{o as n,s as t};

@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-FXir3jLF.js";import{c as t}from"./index-qOKJh3Dr.js";import{t as n}from"./browse-D00wEDbW.js";var r=e();function i(){let e=t.useLoaderData();return(0,r.jsx)(n,{kind:`movie`,titles:e.titles})}export{i as component};

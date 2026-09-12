@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Filmoza",
+      "hasCanvas": false,
+      "bodyTextLen": 4082,
+      "bodyTextHash": "b608ae8ebc7bd6571c15e2f9637058d9e69261637e39534c003b9df5ecb8ddee",
+      "bodyTextPrefix": "FILMOZA Filmy Seriale Programy Gatunki Zaloguj się FILM 2015 FHD",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Filmoza",
+      "hasCanvas": false,
+      "bodyTextLen": 4051,
+      "bodyTextHash": "f1ce2a45c370e8a140e3b371d4ff9611a69dd91846c97ddbdc761ec81a1b4b90",
+      "bodyTextPrefix": "FILMOZA Zaloguj się FILM 2015 FHD 7+ Cosmos Laundromat Zrozpaczo",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}

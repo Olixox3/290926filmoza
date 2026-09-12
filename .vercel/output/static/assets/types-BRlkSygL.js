@@ -1,0 +1,1 @@
+var e={movie:`Film`,series:`Serial`,show:`Program`},t={movie:`Filmy`,series:`Seriale`,show:`Programy`};export{t as n,e as t};

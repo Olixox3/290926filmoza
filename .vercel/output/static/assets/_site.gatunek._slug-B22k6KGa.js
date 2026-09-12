@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-FXir3jLF.js";import{r as t}from"./index-qOKJh3Dr.js";import{t as n}from"./browse-D00wEDbW.js";var r=e();function i(){let{slug:e}=t.useParams(),i=t.useLoaderData(),a=i.titles.filter(t=>t.genres.some(t=>t.slug===e)),o=i.genres.find(t=>t.slug===e)?.name??e;return(0,r.jsx)(n,{titles:a,heading:o})}export{i as component};
