@@ -1,36 +1,48 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "react-jsx",
+    "jsx": "preserve",
     "strict": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    // `src/lib/db.ts` imports scripts/migration-plan.mjs; checkJs types the
-    // implementation itself instead of a hand-written declaration beside it.
     "allowJs": true,
-    "checkJs": true,
     "noEmit": true,
-    "types": [
-      "vite/client",
-      "node"
-    ],
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    },
-    "allowImportingTsExtensions": true
+      "@/*": ["./src/*"]
+    }
   },
   "include": [
-    "src",
-    "server"
-  ]
+    "next-env.d.ts",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/auth.ts",
+    "src/auth.config.ts",
+    "src/middleware.ts",
+    "src/components/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/lib/db.ts",
+    "src/lib/auth-adapter.ts",
+    "src/lib/supabase.ts",
+    "src/lib/supabase-storage.ts",
+    "src/lib/catalog.ts",
+    "src/lib/actions.ts",
+    "src/lib/cn.ts",
+    "src/lib/slug.ts",
+    "src/lib/types.ts",
+    "src/lib/preview-host-bridge.ts",
+    "src/lib/preview-embedder-origin.ts",
+    "src/lib/app-data/types.ts",
+    "src/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "next.config.ts"
+  ],
+  "exclude": ["node_modules"]
 }

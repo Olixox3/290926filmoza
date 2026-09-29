@@ -1,238 +1,305 @@
-import { pendingMigrations } from "../../scripts/migration-plan.mjs";
+import { randomUUID } from "node:crypto";
 
-/** Which database backend is active. */
-export type DbSource = "neon" | "pglite";
+export type SqlRow = Record<string, unknown>;
 
-// An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
-// "unset" — otherwise production would silently run on the PGLite fallback.
-const rawDatabaseUrl =
-  typeof process !== "undefined" ? process.env.DATABASE_URL : undefined;
-const databaseUrl =
-  rawDatabaseUrl && rawDatabaseUrl.trim() ? rawDatabaseUrl : undefined;
+type QueryFn = <T = SqlRow>(text: string, params?: unknown[]) => Promise<T[]>;
 
-/**
- * Active backend: real **Neon** when `DATABASE_URL` is set (deployed / configured
- * sandbox), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
- * the app has a working database even with nothing configured — the live preview
- * included. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
- */
-export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
-
-/**
- * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the
- * tagged-template and `.query()` forms resolve to an array of row objects:
- *
- *   const sql = await getSql();
- *   const rows = await sql`select * from todos where id = ${id}`; // parameterized
- *   const rows2 = await sql.query("select * from todos where id = $1", [id]);
- */
-export interface Sql {
-  <T = Record<string, unknown>>(
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ): Promise<T[]>;
-  query<T = Record<string, unknown>>(
-    text: string,
-    params?: unknown[],
-  ): Promise<T[]>;
-}
-
-/**
- * Init state lives on globalThis as promises: dev HMR creates new instances of
- * this module, and two instances racing module-level state would open a second
- * pool or run two concurrent PGLite migration passes (whose duplicate
- * `_migrations` insert rejects — and would get memoized, poisoning every later
- * `getSql()`). A failed init clears its slot so the next call retries.
- */
 const globalRef = globalThis as typeof globalThis & {
-  __pgSqlPromise__?: Promise<Sql>;
+  __filmozaQuery__?: QueryFn;
+  __filmozaReady__?: Promise<void>;
   __pgliteInstance__?: Promise<import("@electric-sql/pglite").PGlite>;
-  __pgliteMigrateChain__?: Promise<void>;
 };
 
-/**
- * Result-type parity: Postgres sends every value as text plus a type OID — the
- * JS value is the DRIVER's parsing choice, and pg and PGLite disagree (pg:
- * int8 -> string, date -> local-midnight Date; PGLite: int8 -> BigInt, which
- * JSON.stringify rejects, date -> UTC Date). Normalize both so preview and
- * production return identical, JSON-safe shapes:
- *   int8/bigint (incl. count(*)) -> number (past 2^53 loses precision — cast
- *                                   `::text` if you ever need huge integers)
- *   date                         -> 'YYYY-MM-DD' string
- *   interval                     -> Postgres interval text
- * numeric already comes back as a string on both (arbitrary precision).
- */
-const OID_INT8 = 20;
-const OID_DATE = 1082;
-const OID_INTERVAL = 1186;
-const identity = (v: string) => v;
+const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
 
-type Run = <T>(text: string, params: unknown[]) => Promise<T[]>;
-
-/** Wrap a query runner in the tagged-template + `.query()` `Sql` surface. */
-function toSql(run: Run): Sql {
-  const sql = (async <T = Record<string, unknown>>(
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ): Promise<T[]> => {
-    // Rebuild with $1, $2, … placeholders so values stay parameterized.
-    let text = strings[0];
-    for (let i = 0; i < values.length; i += 1) text += `$${i + 1}${strings[i + 1]}`;
-    return run<T>(text, values);
-  }) as unknown as Sql;
-  sql.query = <T = Record<string, unknown>>(text: string, params: unknown[] = []) =>
-    run<T>(text, params);
-  return sql;
+function wrapPgTypes(pg: typeof import("pg")) {
+  pg.types.setTypeParser(20, (v) => Number(v));
+  pg.types.setTypeParser(1082, (v) => v);
 }
 
-function createNeonSql(): Promise<Sql> {
-  globalRef.__pgSqlPromise__ ??= (async () => {
-    // Regular Postgres driver: node-postgres (`pg`) — works directly with Neon's
-    // pooled endpoint. One pool per process; warm serverless instances reuse it.
-    const { Pool, types } = await import("pg");
-    types.setTypeParser(OID_INT8, Number);
-    types.setTypeParser(OID_DATE, identity);
-    types.setTypeParser(OID_INTERVAL, identity);
-    const pool = new Pool({ connectionString: databaseUrl });
-    return toSql(async <T>(text: string, params: unknown[]) => {
+async function createQuery(): Promise<QueryFn> {
+  if (databaseUrl) {
+    const pg = await import("pg");
+    wrapPgTypes(pg);
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 8 });
+    return async <T = SqlRow>(text: string, params: unknown[] = []) => {
       const res = await pool.query(text, params);
       return res.rows as T[];
-    });
-  })().catch((err) => {
-    globalRef.__pgSqlPromise__ = undefined;
-    throw err;
-  });
-  return globalRef.__pgSqlPromise__;
-}
+    };
+  }
 
-async function createPgliteSql(): Promise<Sql> {
-  // Embedded Postgres, imported on demand so it never loads on the Neon path.
-  // One in-memory instance per process, shared across HMR module instances, so
-  // data survives source edits (it resets on dev-server restart).
   globalRef.__pgliteInstance__ ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
-    const pg = new PGlite({
-      parsers: {
-        [OID_INT8]: Number,
-        [OID_DATE]: identity,
-        [OID_INTERVAL]: identity,
-      },
-    });
+    const pg = new PGlite();
     await pg.waitReady;
-    await pg.exec(
-      "create table if not exists _migrations (name text primary key, applied_at timestamptz not null default now())",
-    );
     return pg;
-  })().catch((err) => {
-    globalRef.__pgliteInstance__ = undefined;
-    throw err;
-  });
-  const pg = await globalRef.__pgliteInstance__;
-
-  // Apply migrations/ (the single schema source) so preview matches production.
-  // SQL is inlined by the bundler via import.meta.glob (no runtime fs); applied
-  // files are tracked in _migrations. The glob does not descend, so the opt-in
-  // auth schema under migrations/auth/ stays out. Runs once per module instance
-  // — so an HMR reload after adding a migration file applies it live — with
-  // passes serialized on a global chain so concurrent callers never
-  // double-apply.
-  const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-    const doneRows = await pg.query<{ name: string }>(
-      "select name from _migrations",
-    );
-    const done = doneRows.rows.map((r) => r.name);
-    for (const { name, path } of pendingMigrations(Object.keys(migrations), done)) {
-      // Apply + record atomically (parity with scripts/migrate.mjs) so a failed
-      // statement can't leave a file half-applied but untracked.
-      await pg.transaction(async (tx) => {
-        await tx.exec(migrations[path]);
-        await tx.query("insert into _migrations (name) values ($1)", [name]);
-      });
-    }
+  })();
+  const pglite = await globalRef.__pgliteInstance__;
+  return async <T = SqlRow>(text: string, params: unknown[] = []) => {
+    const res = await pglite.query<T>(text, params);
+    return res.rows;
   };
-  const pass = (globalRef.__pgliteMigrateChain__ ?? Promise.resolve())
-    .catch(() => undefined) // an earlier failed pass must not wedge the chain
-    .then(migrate);
-  globalRef.__pgliteMigrateChain__ = pass;
-  await pass;
-
-  return toSql(async <T>(text: string, params: unknown[]) => {
-    const result = await pg.query<T>(text, params);
-    return result.rows;
-  });
 }
 
-let sqlPromise: Promise<Sql> | null = null;
+export async function query<T = SqlRow>(text: string, params: unknown[] = []): Promise<T[]> {
+  globalRef.__filmozaQuery__ ??= await createQuery();
+  return globalRef.__filmozaQuery__<T>(text, params);
+}
 
-async function createSql(): Promise<Sql> {
-  if (typeof window !== "undefined") {
-    throw new Error(
-      "@/lib/db is server-only — call getSql() from a createServerFn handler " +
-        "or a server route loader, never from client code.",
+export async function ensureDbReady(): Promise<void> {
+  globalRef.__filmozaReady__ ??= (async () => {
+    await query("select 1 as ok");
+    await applySchema();
+  })().catch((err) => {
+    globalRef.__filmozaReady__ = undefined;
+    throw err;
+  });
+  return globalRef.__filmozaReady__;
+}
+
+async function applySchema() {
+  await query(`
+    create table if not exists users (
+      id text primary key,
+      name text,
+      email text unique,
+      password text,
+      image text,
+      role text not null default 'user',
+      email_verified timestamptz
+    )
+  `);
+  await query(`alter table users add column if not exists password text`);
+  await query(`alter table users add column if not exists role text`);
+  await query(`alter table users add column if not exists image text`);
+  await query(`alter table users add column if not exists email_verified timestamptz`);
+  await query(`update users set role = 'user' where role is null`);
+
+  await query(`
+    create table if not exists accounts (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      type text not null,
+      provider text not null,
+      provider_account_id text not null,
+      refresh_token text,
+      access_token text,
+      expires_at bigint,
+      token_type text,
+      scope text,
+      id_token text,
+      session_state text,
+      unique (provider, provider_account_id)
+    )
+  `);
+  await query(`alter table accounts add column if not exists expires_at bigint`);
+  await query(`alter table accounts add column if not exists token_type text`);
+  await query(`alter table accounts add column if not exists scope text`);
+  await query(`alter table accounts add column if not exists id_token text`);
+  await query(`alter table accounts add column if not exists session_state text`);
+
+  await query(`
+    create table if not exists sessions (
+      id text primary key,
+      session_token text not null unique,
+      user_id text not null references users(id) on delete cascade,
+      expires timestamptz not null
+    )
+  `);
+
+  await query(`
+    create table if not exists verification_tokens (
+      identifier text not null,
+      token text not null,
+      expires timestamptz not null,
+      primary key (identifier, token)
+    )
+  `);
+
+  await query(`
+    create table if not exists media (
+      id serial primary key,
+      title text not null,
+      slug text not null unique,
+      type text not null check (type in ('movie', 'series')),
+      description text,
+      poster_url text,
+      backdrop_url text,
+      video_url text,
+      release_year int,
+      genre text
+    )
+  `);
+
+  await query(`
+    create table if not exists episodes (
+      id serial primary key,
+      media_id int not null references media(id) on delete cascade,
+      season_number int not null default 1,
+      episode_number int not null,
+      title text not null,
+      video_url text,
+      thumbnail_url text,
+      unique (media_id, season_number, episode_number)
+    )
+  `);
+
+  await query(`
+    create table if not exists favorites (
+      user_id text not null,
+      media_id int not null references media(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (user_id, media_id)
+    )
+  `);
+
+  await query(`
+    create table if not exists watch_progress (
+      user_id text not null,
+      media_id int not null references media(id) on delete cascade,
+      episode_id int references episodes(id) on delete cascade,
+      position_seconds int not null default 0,
+      duration_seconds int not null default 0,
+      updated_at timestamptz not null default now(),
+      unique (user_id, media_id)
+    )
+  `);
+
+  const count = await query<{ n: number }>("select count(*)::int as n from media");
+  if ((count[0]?.n ?? 0) === 0) {
+    await seedCatalog();
+  }
+  await query(`update media set description = replace(description, 'Zrozpaczka', 'Zrozpaczona') where description like '%Zrozpaczka%'`);
+}
+
+async function seedCatalog() {
+  const rows: Array<[string, string, string, string, string | null, string | null, string | null, number, string]> = [
+    [
+      "Big Buck Bunny",
+      "big-buck-bunny",
+      "movie",
+      "Otwarty film Fundacji Blendera. Ogromny, łagodny królik mieszka na łące — aż trójka złośliwych gryzoni psuje mu poranek.",
+      "/posters/big-buck-bunny.jpg",
+      "/backdrops/big-buck-bunny.jpg",
+      "/videos/big-buck-bunny.mp4",
+      2008,
+      "Animacja",
+    ],
+    [
+      "Sintel",
+      "sintel",
+      "movie",
+      "Dziewczyna imieniem Sintel wędruje przez mroźny świat, by odnaleźć rannego smoka, którego kiedyś uratowała.",
+      "/posters/sintel.jpg",
+      "/backdrops/sintel.jpg",
+      "/videos/sintel.mp4",
+      2010,
+      "Animacja",
+    ],
+    [
+      "Elephants Dream",
+      "elephants-dream",
+      "movie",
+      "Pierwszy otwarty film Blendera. Emo i Probo błądzą po surrealistycznej machinie ze stali i kabli.",
+      "/posters/elephants-dream.jpg",
+      "/backdrops/cinema.jpg",
+      "/videos/elephants-dream.mp4",
+      2006,
+      "Animacja",
+    ],
+    [
+      "Cosmos Laundromat",
+      "cosmos-laundromat",
+      "movie",
+      "Zrozpaczona owca na bezludnej planecie dostaje od tajemniczego sprzedawcy ofertę, której nie sposób odrzucić.",
+      "/posters/cosmos-laundromat.jpg",
+      "/backdrops/cinema.jpg",
+      "/videos/cosmos-laundromat.mp4",
+      2015,
+      "Animacja",
+    ],
+    [
+      "Noc żywych trupów",
+      "noc-zywych-trupow",
+      "movie",
+      "Grupa nieznajomych zamyka się w farmie, gdy umarli zaczynają chodzić. Klasyczny horror George’a A. Romero.",
+      "/posters/night-of-the-living-dead.jpg",
+      "/backdrops/cinema.jpg",
+      "/videos/night-of-the-living-dead.mp4",
+      1968,
+      "Horror",
+    ],
+    [
+      "Nosferatu",
+      "nosferatu",
+      "movie",
+      "Hutter jedzie w Karpaty, by sprzedać dom tajemniczemu hrabiemu Orlokowi. Ekspresjonistyczny wampiryczny niemowa Murnaua.",
+      "/posters/nosferatu.jpg",
+      "/backdrops/nosferatu.jpg",
+      "/videos/nosferatu.mp4",
+      1922,
+      "Horror",
+    ],
+    [
+      "Metropolis",
+      "metropolis",
+      "movie",
+      "Futurystyczne miasto, robot i rewolucja. Niemy epos Fritza Langa — kanon science fiction.",
+      "/posters/metropolis.jpg",
+      "/backdrops/cinema.jpg",
+      "/videos/metropolis.mp4",
+      1927,
+      "Sci-Fi",
+    ],
+    [
+      "Generał",
+      "general",
+      "movie",
+      "Buster Keaton goni skradzioną lokomotywę. Jeden z najdoskonalszych filmów niemych kina slapstickowego.",
+      "/posters/the-general.jpg",
+      "/backdrops/cinema.jpg",
+      "/videos/the-general.mp4",
+      1926,
+      "Komedia",
+    ],
+    [
+      "Caminandes",
+      "caminandes",
+      "series",
+      "Krótka seria Blendera o lamie, która nie umie przejść przez ogrodzenie. Ciepła, gagowa animacja.",
+      "/posters/caminandes.jpg",
+      "/backdrops/cinema.jpg",
+      null,
+      2013,
+      "Animacja",
+    ],
+  ];
+
+  for (const row of rows) {
+    await query(
+      `insert into media (title, slug, type, description, poster_url, backdrop_url, video_url, release_year, genre)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       on conflict (slug) do nothing`,
+      row,
     );
   }
-  return dbSource === "neon" ? createNeonSql() : createPgliteSql();
-}
 
-/**
- * Get the shared, **server-only** SQL client. Neon when `DATABASE_URL` is set,
- * otherwise the local PGLite fallback. Memoized — safe to call per request.
- *
- * Schema comes from `migrations/*.sql`, auto-applied before the first query on
- * both backends — define tables there, never inline in server functions.
- */
-export function getSql(): Promise<Sql> {
-  sqlPromise ??= createSql().catch((err) => {
-    sqlPromise = null; // don't memoize failures — let the next call retry
-    throw err;
-  });
-  return sqlPromise;
-}
-
-/**
- * The shared PGLite instance (preview only), with `migrations/*.sql` applied.
- * Lets Better Auth persist to the SAME embedded DB as app data in preview (via a
- * Kysely dialect). Throws when `DATABASE_URL` is set (that path uses Neon).
- */
-export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite> {
-  if (dbSource !== "pglite") {
-    throw new Error("getPglite() is only available on the PGLite fallback (no DATABASE_URL)");
+  const series = await query<{ id: number }>("select id from media where slug = 'caminandes'");
+  if (series[0]) {
+    await query(
+      `insert into episodes (media_id, season_number, episode_number, title, video_url, thumbnail_url)
+       values ($1, 1, 1, 'Llama Drama', '/videos/caminandes.mp4', '/posters/caminandes.jpg')
+       on conflict do nothing`,
+      [series[0].id],
+    );
   }
-  await getSql();
-  const pg = await globalRef.__pgliteInstance__;
-  if (!pg) throw new Error("PGLite instance failed to initialize");
-  return pg;
 }
 
-/**
- * Finish DB bootstrap before the server handles traffic.
- *
- * - **PGLite** (preview / no `DATABASE_URL`): open the in-memory DB and apply
- *   `migrations/*.sql`. Idempotent — concurrent callers share one promise.
- * - **Neon**: no-op (pool is created lazily on first query).
- *
- * Vite `configureServer` awaits this at dev startup; production imports of this
- * module kick it off immediately (see bottom of file).
- */
-export function ensureDbReady(): Promise<void> {
-  if (dbSource !== "pglite") return Promise.resolve();
-  return getSql().then(() => undefined);
+export function newId() {
+  return randomUUID();
 }
 
-// Server-only eager start: kick PGLite bootstrap as soon as this module loads in
-// Node. Client bundles never hit this path (`getSql` throws in the browser).
-const globalBoot = globalThis as typeof globalThis & {
-  __pgBootstrapPromise__?: Promise<void>;
-};
-if (typeof window === "undefined" && dbSource === "pglite") {
-  globalBoot.__pgBootstrapPromise__ ??= ensureDbReady().catch((err) => {
-    globalBoot.__pgBootstrapPromise__ = undefined;
-    console.error("[db] PGLite bootstrap failed:", err);
-    throw err;
-  });
+export async function countAdmins() {
+  const rows = await query<{ n: number }>("select count(*)::int as n from users where role = 'admin'");
+  return rows[0]?.n ?? 0;
 }

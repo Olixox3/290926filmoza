@@ -1,9 +1,9 @@
-import { Link } from "@tanstack/react-router";
+import Link from "next/link";
 import { cn } from "@/lib/cn";
 
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
-    <Link to="/" className="flex items-center gap-2.5 text-fg no-underline">
+    <Link href="/" className="flex items-center gap-2.5 text-fg no-underline">
       <span className="grid size-8 shrink-0 place-items-center rounded-sm bg-accent text-accent-fg">
         <svg viewBox="0 0 24 24" className="size-4" aria-hidden>
           <rect x="3" y="5" width="18" height="14" rx="1.5" fill="currentColor" />

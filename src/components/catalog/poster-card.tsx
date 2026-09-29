@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import Link from "next/link";
 import { Play } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Badge } from "@/components/ui/badge";
@@ -46,8 +46,7 @@ export function PosterCard({
 }) {
   return (
     <Link
-      to="/tytul/$slug"
-      params={{ slug: title.slug }}
+      href={`/tytul/${title.slug}`}
       className={cn(
         "group relative block overflow-hidden rounded-md bg-card outline-none ring-offset-bg focus-visible:ring-2 focus-visible:ring-accent",
         className,
@@ -78,7 +77,7 @@ export function PosterCard({
           {title.quality ? <Badge tone="fg">{title.quality}</Badge> : null}
         </div>
         <div className="absolute top-2 right-2">
-          <Badge>{KIND_LABEL[title.kind]}</Badge>
+          <Badge>{KIND_LABEL[title.kind] ?? title.kind}</Badge>
         </div>
         {progress != null && progress > 0 && progress < 0.95 ? (
           <div className="absolute inset-x-0 bottom-0 h-0.5 bg-fg/20">
@@ -88,7 +87,7 @@ export function PosterCard({
       </div>
       <div className="px-1 pt-2 pb-1">
         <p className="line-clamp-1 text-sm font-medium">{title.title}</p>
-        <p className="text-xs text-muted">{title.year ?? KIND_LABEL[title.kind]}</p>
+        <p className="text-xs text-muted">{title.year ?? KIND_LABEL[title.kind] ?? title.kind}</p>
       </div>
     </Link>
   );
