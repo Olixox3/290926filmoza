@@ -30,13 +30,11 @@ export async function registerUser(input: { name: string; email: string; passwor
   if (existing.length) throw new Error("Konto z tym e-mailem już istnieje");
   const hash = await bcrypt.hash(password, 12);
   const role = (await countAdmins()) === 0 ? "admin" : "user";
-  await query(`insert into users (id, name, email, password, role) values ($1,$2,$3,$4,$5)`, [
-    newId(),
-    name || email.split("@")[0],
-    email,
-    hash,
-    role,
-  ]);
+  await query(
+    `insert into users (id, name, email, password, role, email_verified)
+     values ($1,$2,$3,$4,$5, now())`,
+    [newId(), name || email.split("@")[0], email, hash, role],
+  );
   return { ok: true as const };
 }
 

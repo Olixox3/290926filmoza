@@ -3,6 +3,9 @@ import { auth } from "@/auth";
 import { uploadMediaAsset, type UploadFolder } from "@/lib/supabase-storage";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const FOLDERS = new Set(["posters", "backdrops", "videos", "episodes"]);
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -15,7 +18,8 @@ export async function POST(req: Request) {
 
   const form = await req.formData();
   const file = form.get("file");
-  const folder = String(form.get("folder") ?? "posters") as UploadFolder;
+  const folderRaw = String(form.get("folder") ?? "posters");
+  const folder = (FOLDERS.has(folderRaw) ? folderRaw : "posters") as UploadFolder;
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Brak pliku" }, { status: 400 });
   }

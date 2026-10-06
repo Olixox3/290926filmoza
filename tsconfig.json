@@ -30,6 +30,7 @@
     "src/components/**/*.tsx",
     "src/lib/db.ts",
     "src/lib/auth-adapter.ts",
+    "src/lib/auth-constants.ts",
     "src/lib/supabase.ts",
     "src/lib/supabase-storage.ts",
     "src/lib/catalog.ts",

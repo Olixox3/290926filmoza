@@ -8,12 +8,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { GoogleSignInButton } from "./GoogleSignInButton";
 
-export function LoginForm() {
+const AUTH_ERRORS: Record<string, string> = {
+  Configuration: "Logowanie Google nie jest skonfigurowane. Sprawdź GOOGLE_CLIENT_ID / SECRET i NEXTAUTH_URL.",
+  AccessDenied: "Odmowa dostępu.",
+  Callback: "Google odrzucił przekierowanie. W Google Cloud dodaj: https://filmoza.vercel.app/api/auth/callback/google",
+  OAuthCallback: "Google odrzucił przekierowanie. W Google Cloud dodaj: https://filmoza.vercel.app/api/auth/callback/google",
+  OAuthSignin: "Nie udało się rozpocząć logowania Google.",
+  OAuthAccountNotLinked: "To konto Google używa e-maila, który już istnieje. Zaloguj się e-mailem, a konta się połączą.",
+  CredentialsSignin: "Nieprawidłowy e-mail lub hasło.",
+  Default: "Logowanie nie powiodło się. Spróbuj ponownie.",
+};
+
+export function LoginForm({ initialError }: { initialError?: string | null }) {
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    initialError ? (AUTH_ERRORS[initialError] ?? AUTH_ERRORS.Default) : null,
+  );
   const [busy, setBusy] = useState(false);
   const router = useRouter();
 
@@ -37,7 +50,11 @@ export function LoginForm() {
         redirect: false,
         callbackUrl: "/",
       });
-      if (result?.error) throw new Error(mode === "up" ? "Konto utworzone, ale logowanie nie powiodło się" : "Nieprawidłowy e-mail lub hasło");
+      if (result?.error) {
+        throw new Error(
+          mode === "up" ? "Konto utworzone, ale logowanie nie powiodło się" : "Nieprawidłowy e-mail lub hasło",
+        );
+      }
       router.push("/");
       router.refresh();
     } catch (err) {

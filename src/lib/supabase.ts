@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-let cached: SupabaseClient | null = null;
+let adminCached: SupabaseClient | null = null;
+let anonCached: SupabaseClient | null = null;
 
 export function isSupabaseConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
@@ -13,10 +14,10 @@ export function getSupabaseAdmin(): SupabaseClient {
   if (!url || !key) {
     throw new Error("Brak NEXT_PUBLIC_SUPABASE_URL lub SUPABASE_SERVICE_ROLE_KEY");
   }
-  cached ??= createClient(url, key, {
+  adminCached ??= createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  return cached;
+  return adminCached;
 }
 
 export function getSupabaseAnon(): SupabaseClient {
@@ -25,7 +26,8 @@ export function getSupabaseAnon(): SupabaseClient {
   if (!url || !anon) {
     throw new Error("Brak NEXT_PUBLIC_SUPABASE_URL lub NEXT_PUBLIC_SUPABASE_ANON_KEY");
   }
-  return createClient(url, anon, {
+  anonCached ??= createClient(url, anon, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  return anonCached;
 }

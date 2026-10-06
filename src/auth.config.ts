@@ -1,18 +1,17 @@
 import type { NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
+import {
+  GOOGLE_CALLBACK_URL,
+  PRODUCTION_URL,
+  applyProductionAuthUrl,
+  shouldForceProductionGoogleRedirect,
+} from "@/lib/auth-constants";
 
-export const PRODUCTION_URL = "https://filmoza.vercel.app";
+applyProductionAuthUrl();
 
-/** Kill grok/preview OAuth proxies so Google sees the production callback only. */
-delete process.env.AUTH_REDIRECT_PROXY_URL;
-process.env.AUTH_TRUST_HOST = "true";
-
-if (process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production") {
-  process.env.AUTH_URL = process.env.NEXTAUTH_URL || process.env.AUTH_URL || PRODUCTION_URL;
-  process.env.NEXTAUTH_URL = process.env.AUTH_URL;
-}
-
-const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() || "";
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim() || "";
+const forceGoogleCallback = shouldForceProductionGoogleRedirect();
 
 export const authConfig = {
   trustHost: true,
@@ -24,23 +23,21 @@ export const authConfig = {
     signIn: "/login",
     error: "/login",
   },
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
   providers: [
-    ...(googleEnabled
-      ? [
-          Google({
-            clientId: process.env.GOOGLE_CLIENT_ID,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            allowDangerousEmailAccountLinking: true,
-          }),
-        ]
-      : [
-          Google({
-            clientId: process.env.GOOGLE_CLIENT_ID ?? "missing",
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "missing",
-            allowDangerousEmailAccountLinking: true,
-          }),
-        ]),
+    Google({
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
+      allowDangerousEmailAccountLinking: true,
+      authorization: {
+        params: {
+          prompt: "select_account",
+          access_type: "offline",
+          response_type: "code",
+          ...(forceGoogleCallback ? { redirect_uri: GOOGLE_CALLBACK_URL } : {}),
+        },
+      },
+    }),
   ],
   callbacks: {
     async jwt({ token, user }) {
@@ -49,6 +46,7 @@ export const authConfig = {
         token.email = user.email;
         token.role = user.role === "admin" ? "admin" : "user";
       }
+      if (!token.role) token.role = "user";
       return token;
     },
     async session({ session, token }) {
@@ -62,6 +60,16 @@ export const authConfig = {
     authorized({ auth, request }) {
       if (request.nextUrl.pathname.startsWith("/admin")) return Boolean(auth);
       return true;
+    },
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+      try {
+        const next = new URL(url);
+        if (next.origin === baseUrl || next.origin === PRODUCTION_URL) return url;
+      } catch {
+        /* ignore */
+      }
+      return baseUrl;
     },
   },
 } satisfies NextAuthConfig;

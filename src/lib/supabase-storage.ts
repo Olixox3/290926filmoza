@@ -26,9 +26,23 @@ function extFor(type: string, fallbackName: string) {
 
 export type UploadFolder = "posters" | "backdrops" | "videos" | "episodes";
 
+async function ensurePublicBucket() {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase.storage.getBucket(MEDIA_BUCKET);
+  if (!data) {
+    const { error } = await supabase.storage.createBucket(MEDIA_BUCKET, {
+      public: true,
+      fileSizeLimit: "50MB",
+    });
+    if (error && !/already exists|duplicate/i.test(error.message)) {
+      throw new Error(error.message);
+    }
+  }
+}
+
 /**
  * Upload a file from the admin panel to the public `media-assets` bucket
- * and return a public URL suitable for media.poster_url / backdrop_url.
+ * and return a public URL for media.poster_url / backdrop_url / video_url.
  *
  * When Supabase is not configured (local preview), small images fall back
  * to a data URL so the form still works.
@@ -38,7 +52,7 @@ export async function uploadMediaAsset(
   folder: UploadFolder = "posters",
 ): Promise<string> {
   if (!file || file.size === 0) throw new Error("Pusty plik");
-  if (file.size > 12 * 1024 * 1024) throw new Error("Plik jest za duży (max 12 MB)");
+  if (file.size > 50 * 1024 * 1024) throw new Error("Plik jest za duży (max 50 MB)");
   const type = file.type || "application/octet-stream";
   if (!ALLOWED.has(type) && !type.startsWith("image/")) {
     throw new Error("Dozwolone są obrazy i wideo MP4/WebM");
@@ -52,8 +66,8 @@ export async function uploadMediaAsset(
     return `data:${type};base64,${buf.toString("base64")}`;
   }
 
+  await ensurePublicBucket();
   const supabase = getSupabaseAdmin();
-  await supabase.storage.createBucket(MEDIA_BUCKET, { public: true }).catch(() => undefined);
 
   const ext = extFor(type, file.name);
   const path = `${folder}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
@@ -62,6 +76,7 @@ export async function uploadMediaAsset(
   const { error } = await supabase.storage.from(MEDIA_BUCKET).upload(path, buffer, {
     contentType: type,
     upsert: false,
+    cacheControl: "3600",
   });
   if (error) throw new Error(error.message);
 

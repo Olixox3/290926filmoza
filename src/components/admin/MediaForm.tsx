@@ -50,7 +50,7 @@ export function MediaForm({
       if (kind === "posters") setPosterUrl(url);
       if (kind === "backdrops") setBackdropUrl(url);
       if (kind === "videos") setVideoUrl(url);
-      toast.success("Zapisano plik w Supabase Storage");
+      toast.success("Zapisano plik w Storage");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Upload nie powiódł się");
     } finally {
@@ -131,7 +131,6 @@ export function MediaForm({
 
         <FileAndUrl
           label="Plakat"
-          folder="posters"
           url={posterUrl}
           onUrl={setPosterUrl}
           uploading={uploading === "posters"}
@@ -139,7 +138,6 @@ export function MediaForm({
         />
         <FileAndUrl
           label="Banner / tło"
-          folder="backdrops"
           url={backdropUrl}
           onUrl={setBackdropUrl}
           uploading={uploading === "backdrops"}
@@ -149,7 +147,6 @@ export function MediaForm({
           <div className="md:col-span-2">
             <FileAndUrl
               label="Wideo (MP4 / HLS / URL)"
-              folder="videos"
               url={videoUrl}
               onUrl={setVideoUrl}
               uploading={uploading === "videos"}
@@ -205,7 +202,6 @@ function FileAndUrl({
   accept = "image/*",
 }: {
   label: string;
-  folder: string;
   url: string;
   onUrl: (v: string) => void;
   onFile: (file: File | undefined) => void;
@@ -217,7 +213,7 @@ function FileAndUrl({
       <Label>{label}</Label>
       <Input value={url} onChange={(e) => onUrl(e.target.value)} placeholder="https://… lub wgraj plik" />
       <label className="flex h-10 cursor-pointer items-center justify-center rounded-md border border-dashed border-border text-xs text-muted hover:bg-bg-muted">
-        {uploading ? "Wgrywanie do Storage…" : "Wgraj plik do Supabase Storage"}
+        {uploading ? "Wgrywanie do Storage…" : "Wgraj plik do Storage"}
         <input
           type="file"
           accept={accept}
@@ -240,6 +236,20 @@ function EpisodesBlock({ mediaId, episodes }: { mediaId: number; episodes: Episo
   const [videoUrl, setVideoUrl] = useState("");
   const [thumb, setThumb] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState<string | null>(null);
+
+  async function onUpload(kind: "episodes" | "videos", file: File | undefined, apply: (url: string) => void) {
+    if (!file) return;
+    setUploading(kind);
+    try {
+      apply(await uploadFile(file, kind));
+      toast.success("Zapisano plik w Storage");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload nie powiódł się");
+    } finally {
+      setUploading(null);
+    }
+  }
 
   return (
     <fieldset className="space-y-4 rounded-xl border border-border bg-bg-elevated p-4">
@@ -266,29 +276,31 @@ function EpisodesBlock({ mediaId, episodes }: { mediaId: number; episodes: Episo
       <div className="grid gap-2 md:grid-cols-2">
         <Input type="number" value={season} onChange={(e) => setSeason(e.target.value)} placeholder="Sezon" />
         <Input type="number" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Nr odcinka" />
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Tytuł odcinka" />
-        <Input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="URL wideo" />
-        <Input
-          value={thumb}
-          onChange={(e) => setThumb(e.target.value)}
-          placeholder="Miniatura (opcjonalnie)"
-          className="md:col-span-2"
-        />
-        <label className="flex h-10 cursor-pointer items-center justify-center rounded-md border border-dashed border-border text-xs text-muted hover:bg-bg-muted md:col-span-2">
-          Wgraj miniaturę
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              void uploadFile(file, "episodes")
-                .then(setThumb)
-                .catch((err) => toast.error(err instanceof Error ? err.message : "Upload nie powiódł się"));
-            }}
-          />
-        </label>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Tytuł odcinka" className="md:col-span-2" />
+        <div className="md:col-span-2 space-y-1.5">
+          <Input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="URL wideo odcinka" />
+          <label className="flex h-10 cursor-pointer items-center justify-center rounded-md border border-dashed border-border text-xs text-muted hover:bg-bg-muted">
+            {uploading === "videos" ? "Wgrywanie wideo…" : "Wgraj plik wideo odcinka"}
+            <input
+              type="file"
+              accept="video/mp4,video/webm"
+              className="hidden"
+              onChange={(e) => void onUpload("videos", e.target.files?.[0], setVideoUrl)}
+            />
+          </label>
+        </div>
+        <div className="md:col-span-2 space-y-1.5">
+          <Input value={thumb} onChange={(e) => setThumb(e.target.value)} placeholder="Miniatura (opcjonalnie)" />
+          <label className="flex h-10 cursor-pointer items-center justify-center rounded-md border border-dashed border-border text-xs text-muted hover:bg-bg-muted">
+            {uploading === "episodes" ? "Wgrywanie miniatury…" : "Wgraj miniaturę"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void onUpload("episodes", e.target.files?.[0], setThumb)}
+            />
+          </label>
+        </div>
       </div>
       <Button
         type="button"
